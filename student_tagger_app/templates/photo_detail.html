@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Photo Detail | Student Photo Tagger{% endblock %}
+{% block content %}
+<section class="panel detail-panel">
+    <div class="panel-heading">
+        <div>
+            <p class="eyebrow">Processed image</p>
+            <h1>{{ photo["original_filename"] }}</h1>
+        </div>
+        <a class="secondary-link" href="/">Back to dashboard</a>
+    </div>
+    <div class="detail-layout">
+        <figure class="detail-figure">
+            <img src="{{ url_for('processed', path='/' + photo['annotated_filename']) }}" alt="{{ photo['original_filename'] }}">
+        </figure>
+        <aside class="detail-sidebar">
+            <article class="meta-card">
+                <h2>Summary</h2>
+                <p>{{ photo["matched_count"] }} matched tags across {{ photo["face_count"] }} detected faces.</p>
+            </article>
+            <article class="meta-card">
+                <h2>Detected faces</h2>
+                {% if detections %}
+                <ul class="detection-list">
+                    {% for detection in detections %}
+                    <li>
+                        <strong>{{ detection["name"] }}</strong>
+                        <span>
+                            {% if detection["distance"] is not none %}
+                            distance {{ '%.3f'|format(detection["distance"]) }}
+                            {% else %}
+                            no score
+                            {% endif %}
+                        </span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p>No faces were detected in this photo.</p>
+                {% endif %}
+            </article>
+        </aside>
+    </div>
+</section>
+{% endblock %}

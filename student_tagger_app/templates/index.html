@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | Student Photo Tagger{% endblock %}
+{% block content %}
+<section class="hero">
+    <div>
+        <p class="eyebrow">Local web app for Windows and macOS</p>
+        <h1>Upload event photos and tag students by name.</h1>
+        <p class="lede">
+            The app builds a reference index from <code>{{ reference_dir.name }}</code>,
+            then scans uploaded images for matching faces.
+        </p>
+    </div>
+    <div class="stats-grid">
+        <article class="stat-card">
+            <span class="stat-value">{{ reference_count }}</span>
+            <span class="stat-label">Known students</span>
+        </article>
+        <article class="stat-card">
+            <span class="stat-value">{{ summary["total_photos"] }}</span>
+            <span class="stat-label">Uploaded photos</span>
+        </article>
+        <article class="stat-card">
+            <span class="stat-value">{{ summary["total_faces"] }}</span>
+            <span class="stat-label">Faces found</span>
+        </article>
+        <article class="stat-card">
+            <span class="stat-value">{{ summary["total_matches"] }}</span>
+            <span class="stat-label">Matched tags</span>
+        </article>
+    </div>
+</section>
+
+{% if dependency_error %}
+<section class="panel warning-panel">
+    <h2>Dependencies missing</h2>
+    <p>{{ dependency_error }}</p>
+    <p>Install the Python requirements, then restart the app.</p>
+</section>
+{% endif %}
+
+{% if warning_count %}
+<section class="panel">
+    <div class="panel-heading">
+        <h2>Reference photo warnings</h2>
+        <form action="/rebuild-index" method="post">
+            <button type="submit">Rebuild Index</button>
+        </form>
+    </div>
+    <p>{{ warning_count }} student portraits could not be indexed cleanly.</p>
+    <ul class="warning-list">
+        {% for warning in index_warnings %}
+        <li>{{ warning }}</li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+<section class="panel">
+    <div class="panel-heading">
+        <h2>Batch Upload</h2>
+        <p>Drop multiple photos here and the app will tag every face it can match.</p>
+    </div>
+    <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+        <label class="dropzone" for="files">
+            <input id="files" type="file" name="files" accept=".jpg,.jpeg,.png,.webp" multiple required>
+            <span>Select or drop photos</span>
+            <small>JPEG, PNG, and WebP are supported.</small>
+        </label>
+        <button type="submit" {% if dependency_error %}disabled{% endif %}>Process Photos</button>
+    </form>
+</section>
+
+<section class="panel">
+    <div class="panel-heading">
+        <h2>Recent Results</h2>
+        <p>Each card opens the tagged image and the list of recognized students.</p>
+    </div>
+    {% if recent_photos %}
+    <div class="gallery">
+        {% for photo in recent_photos %}
+        <a class="photo-card" href="/photos/{{ photo['id'] }}">
+            <img src="{{ url_for('processed', path='/' + photo['annotated_filename']) }}" alt="{{ photo['original_filename'] }}">
+            <div class="photo-meta">
+                <strong>{{ photo["original_filename"] }}</strong>
+                <span>{{ photo["matched_count"] }} matches / {{ photo["face_count"] }} faces</span>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No photos processed yet.</p>
+    {% endif %}
+</section>
+{% endblock %}
