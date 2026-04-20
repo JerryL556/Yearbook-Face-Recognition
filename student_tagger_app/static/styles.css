@@ -155,10 +155,280 @@ code {
     padding-left: 1.2rem;
 }
 
-.upload-form {
-    display: flex;
-    flex-direction: column;
+.progress-panel,
+.workflow-panel {
+    display: grid;
     gap: 1rem;
+}
+
+.progress-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.progress-metrics strong {
+    display: block;
+    font-size: 1.6rem;
+    margin-bottom: 0.25rem;
+}
+
+.progress-track {
+    width: 100%;
+    height: 14px;
+    border-radius: 999px;
+    background: rgba(13, 92, 99, 0.12);
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #0d5c63, #1c8f89);
+    transition: width 0.35s ease;
+}
+
+.progress-note {
+    margin: 0;
+    color: var(--muted);
+}
+
+.workflow-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+    gap: 1rem;
+    align-items: stretch;
+}
+
+.compact-dropzone {
+    min-height: 140px;
+}
+
+.route-tools,
+.field-block {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.field-label {
+    font-size: 0.88rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.folder-picker-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.folder-display {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 0.9rem;
+    border-radius: 0.9rem;
+    background: white;
+    border: 1px solid rgba(30, 28, 24, 0.12);
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-help {
+    color: var(--muted);
+}
+
+.field-block span {
+    font-size: 0.88rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.field-block input {
+    width: 100%;
+    border: 1px solid rgba(30, 28, 24, 0.12);
+    border-radius: 0.9rem;
+    background: white;
+    padding: 0.8rem 0.9rem;
+    font: inherit;
+    color: var(--ink);
+}
+
+.folder-grid,
+.gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.photo-card {
+    background: white;
+    border-radius: 1rem;
+    overflow: hidden;
+    border: 1px solid rgba(30, 28, 24, 0.08);
+}
+
+.batch-review-layout {
+    display: grid;
+}
+
+.batch-list-panel {
+    border: 1px solid rgba(30, 28, 24, 0.08);
+    border-radius: 1rem;
+    background: white;
+}
+
+.batch-list-header,
+.batch-row {
+    display: grid;
+    grid-template-columns: minmax(0, 2.6fr) 150px minmax(160px, 1.1fr) 70px;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.batch-list-header {
+    padding: 0.85rem 1rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid rgba(30, 28, 24, 0.08);
+}
+
+.batch-list {
+    display: grid;
+}
+
+.batch-row {
+    width: 100%;
+    padding: 0.95rem 1rem;
+    border: 0;
+    border-bottom: 1px solid rgba(30, 28, 24, 0.06);
+    border-radius: 0;
+    background: transparent;
+    color: var(--ink);
+    text-align: left;
+}
+
+.batch-row:hover {
+    background: rgba(13, 92, 99, 0.06);
+}
+
+.batch-row-active {
+    background: rgba(13, 92, 99, 0.1);
+}
+
+.batch-row-discarded {
+    color: var(--muted);
+    opacity: 0.65;
+}
+
+.batch-row-name {
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.batch-row-name-button {
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-weight: 700;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.batch-row-name-button:hover {
+    color: var(--accent);
+}
+
+.batch-row-check {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.batch-row-check input {
+    width: 18px;
+    height: 18px;
+}
+
+.preview-popover {
+    position: fixed;
+    z-index: 100;
+    width: min(340px, calc(100vw - 24px));
+    padding: 0.9rem;
+    border-radius: 1rem;
+    border: 1px solid rgba(30, 28, 24, 0.12);
+    background: rgba(255, 250, 242, 0.98);
+    box-shadow: 0 20px 44px rgba(30, 28, 24, 0.16);
+    backdrop-filter: blur(12px);
+}
+
+.preview-close {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 999px;
+}
+
+.preview-popover-image {
+    display: block;
+    width: 100%;
+    max-height: 220px;
+    object-fit: contain;
+    margin-top: 1.25rem;
+    border-radius: 0.8rem;
+    background: #efe9df;
+    border: 1px solid rgba(30, 28, 24, 0.08);
+}
+
+.preview-popover-meta {
+    display: grid;
+    gap: 0.65rem;
+    margin-top: 0.8rem;
+}
+
+.secondary-button {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid rgba(13, 92, 99, 0.2);
+}
+
+.secondary-button:hover {
+    background: rgba(13, 92, 99, 0.08);
+}
+
+.batch-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.batch-summary,
+.large-empty-state {
+    color: var(--muted);
+}
+
+.large-empty-state {
+    padding: 1.25rem;
+    border-radius: 1rem;
+    background: rgba(13, 92, 99, 0.05);
 }
 
 .dropzone {
@@ -215,19 +485,6 @@ button[disabled] {
     opacity: 0.6;
 }
 
-.gallery {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 1rem;
-}
-
-.photo-card {
-    background: white;
-    border-radius: 1rem;
-    overflow: hidden;
-    border: 1px solid rgba(30, 28, 24, 0.08);
-}
-
 .photo-card img,
 .detail-figure img {
     display: block;
@@ -245,6 +502,11 @@ button[disabled] {
 .empty-state,
 .detail-sidebar span {
     color: var(--muted);
+}
+
+.folder-card strong {
+    display: block;
+    margin-bottom: 0.35rem;
 }
 
 .detail-layout {
@@ -275,13 +537,28 @@ button[disabled] {
 
 @media (max-width: 880px) {
     .hero,
-    .detail-layout {
+    .detail-layout,
+    .workflow-toolbar {
         grid-template-columns: 1fr;
+    }
+
+    .progress-metrics {
+        grid-template-columns: 1fr;
+    }
+
+    .batch-actions {
+        flex-direction: column;
+        align-items: stretch;
     }
 
     .panel-heading,
     .page-header {
         align-items: flex-start;
         flex-direction: column;
+    }
+
+    .batch-list-header,
+    .batch-row {
+        grid-template-columns: minmax(0, 1fr);
     }
 }

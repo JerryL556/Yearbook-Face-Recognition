@@ -4,10 +4,9 @@
 <section class="hero">
     <div>
         <p class="eyebrow">Local web app for Windows and macOS</p>
-        <h1>Upload event photos and tag students by name.</h1>
+        <h1>Review every photo, route it to a folder, then tag the batch.</h1>
         <p class="lede">
-            The app builds a reference index from <code>{{ reference_dir.name }}</code>,
-            then scans uploaded images for matching faces.
+            Tagged output is stored under <code>{{ tagged_root_name }}</code>. Choose a destination folder with the native file explorer, discard photos you do not want, and hover over a file name whenever you want a preview.
         </p>
     </div>
     <div class="stats-grid">
@@ -17,7 +16,7 @@
         </article>
         <article class="stat-card">
             <span class="stat-value">{{ summary["total_photos"] }}</span>
-            <span class="stat-label">Uploaded photos</span>
+            <span class="stat-label">Tagged photos</span>
         </article>
         <article class="stat-card">
             <span class="stat-value">{{ summary["total_faces"] }}</span>
@@ -39,9 +38,33 @@
 {% endif %}
 
 {% if index_building %}
-<section class="panel">
+<section class="panel progress-panel" id="index-progress-panel">
     <h2>Building Student Index</h2>
-    <p>The app is starting up and scanning the reference photos in <code>{{ reference_dir.name }}</code>. Refresh in a little while if uploads are still disabled.</p>
+    <p>The app is scanning the reference photos in <code>{{ reference_dir.name }}</code>. This can take several minutes the first time.</p>
+    <div class="progress-metrics">
+        <div class="meta-card">
+            <strong id="progress-count">{{ index_status.processed }} / {{ index_status.total or "?" }}</strong>
+            <span>Reference photos processed</span>
+        </div>
+        <div class="meta-card">
+            <strong id="progress-known">{{ index_status.known_count }}</strong>
+            <span>Usable student matches so far</span>
+        </div>
+        <div class="meta-card">
+            <strong id="progress-warnings">{{ index_status.warning_count }}</strong>
+            <span>Warnings so far</span>
+        </div>
+    </div>
+    <div class="progress-track" aria-hidden="true">
+        <div class="progress-bar" id="progress-bar" style="width: {% if index_status.total %}{{ (index_status.processed / index_status.total * 100)|round(1) }}{% else %}0{% endif %}%"></div>
+    </div>
+    <p class="progress-note" id="progress-note">
+        {% if index_status.current_file %}
+        Working on <code>{{ index_status.current_file }}</code>
+        {% else %}
+        Starting up...
+        {% endif %}
+    </p>
 </section>
 {% endif %}
 
@@ -53,7 +76,7 @@
             <button type="submit">Rebuild Index</button>
         </form>
     </div>
-    <p>{{ warning_count }} student portraits could not be indexed cleanly.</p>
+    <p>{{ warning_count }} reference portraits were skipped or needed attention.</p>
     <ul class="warning-list">
         {% for warning in index_warnings %}
         <li>{{ warning }}</li>
@@ -62,25 +85,101 @@
 </section>
 {% endif %}
 
-<section class="panel">
+<section class="panel workflow-panel">
     <div class="panel-heading">
-        <h2>Batch Upload</h2>
-        <p>Drop multiple photos here and the app will tag every face it can match.</p>
+        <div>
+            <h2>Prepare Batch</h2>
+            <p>Choose one destination folder for the whole batch, discard the photos you do not want, and hover over a file name whenever you want a preview.</p>
+        </div>
     </div>
-    <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
-        <label class="dropzone" for="files">
-            <input id="files" type="file" name="files" accept=".jpg,.jpeg,.png,.webp" multiple required>
-            <span>Select or drop photos</span>
-            <small>JPEG, PNG, and WebP are supported.</small>
+    <div class="workflow-toolbar">
+        <label class="dropzone compact-dropzone" for="files">
+            <input id="files" type="file" name="files" accept=".jpg,.jpeg,.png,.webp" multiple>
+            <span>Add photos to this batch</span>
+            <small id="file-status">Nothing selected yet.</small>
         </label>
-        <button type="submit" {% if dependency_error or index_building %}disabled{% endif %}>Process Photos</button>
-    </form>
+        <div class="route-tools">
+            <span class="field-label">Batch folder</span>
+            <div class="folder-picker-row">
+                <button id="pick-folder" type="button">Choose Folder</button>
+                <div id="bulk-folder-display" class="folder-display">Inbox</div>
+            </div>
+            <small class="folder-help">The picker must stay inside <code>{{ tagged_root_name }}</code>.</small>
+        </div>
+    </div>
+    <div id="preview-empty" class="empty-state large-empty-state">Choose photos to build a review list. Click a row when you want to preview it.</div>
+    <div id="batch-review" class="batch-review-layout" hidden>
+        <div class="batch-list-panel">
+            <div class="batch-list-header">
+                <span>Photo</span>
+                <span>Added</span>
+                <span>Folder</span>
+                <span>Keep</span>
+            </div>
+            <div id="batch-list" class="batch-list"></div>
+        </div>
+    </div>
+    <div class="batch-actions">
+        <div id="batch-summary" class="batch-summary">0 selected for tagging.</div>
+        <button id="process-button" type="button" {% if dependency_error or index_building %}disabled{% endif %}>Start Tagging Batch</button>
+    </div>
+</section>
+
+<section class="panel" id="batch-status-panel" hidden>
+    <div class="panel-heading">
+        <div>
+            <h2>Tagging Status</h2>
+            <p>Live progress for the current batch.</p>
+        </div>
+    </div>
+    <div class="progress-metrics">
+        <div class="meta-card">
+            <strong id="batch-progress-count">0 / 0</strong>
+            <span>Photos processed</span>
+        </div>
+        <div class="meta-card">
+            <strong id="batch-current-folder">Inbox</strong>
+            <span>Current target folder</span>
+        </div>
+        <div class="meta-card">
+            <strong id="batch-current-step">Queued</strong>
+            <span>Current status</span>
+        </div>
+    </div>
+    <div class="progress-track" aria-hidden="true">
+        <div class="progress-bar" id="batch-progress-bar" style="width: 0%"></div>
+    </div>
+    <p class="progress-note" id="batch-progress-note">Waiting to start.</p>
+    <ul id="batch-failures" class="warning-list" hidden></ul>
 </section>
 
 <section class="panel">
     <div class="panel-heading">
-        <h2>Recent Results</h2>
-        <p>Each card opens the tagged image and the list of recognized students.</p>
+        <div>
+            <h2>Tagged Photo Folders</h2>
+            <p>Quick access to the most recently used subfolders under <code>{{ tagged_root_name }}</code>.</p>
+        </div>
+    </div>
+    {% if tagged_folders %}
+    <div class="folder-grid">
+        {% for folder in tagged_folders %}
+        <article class="meta-card folder-card">
+            <strong>{{ folder["folder_name"] }}</strong>
+            <span>{{ folder["photo_count"] }} tagged photos</span>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No tagged photo folders yet.</p>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <div class="panel-heading">
+        <div>
+            <h2>Recent Results</h2>
+            <p>Open a tagged image and review the detected names, score, and destination folder.</p>
+        </div>
     </div>
     {% if recent_photos %}
     <div class="gallery">
@@ -90,6 +189,7 @@
             <div class="photo-meta">
                 <strong>{{ photo["original_filename"] }}</strong>
                 <span>{{ photo["matched_count"] }} matches / {{ photo["face_count"] }} faces</span>
+                <span>Folder: {{ photo["subfolder"] or "Inbox" }}</span>
             </div>
         </a>
         {% endfor %}
@@ -98,4 +198,337 @@
     <p class="empty-state">No photos processed yet.</p>
     {% endif %}
 </section>
+
+<div id="preview-popover" class="preview-popover" hidden>
+    <button type="button" id="preview-close" class="preview-close">x</button>
+    <img id="preview-image" class="preview-popover-image" alt="">
+    <div class="preview-popover-meta">
+        <strong id="preview-name"></strong>
+        <span id="preview-time"></span>
+    </div>
+</div>
+
+<script>
+    (function () {
+        const input = document.getElementById("files");
+        const status = document.getElementById("file-status");
+        const batchReview = document.getElementById("batch-review");
+        const batchList = document.getElementById("batch-list");
+        const previewEmpty = document.getElementById("preview-empty");
+        const previewPopover = document.getElementById("preview-popover");
+        const previewClose = document.getElementById("preview-close");
+        const previewImage = document.getElementById("preview-image");
+        const previewName = document.getElementById("preview-name");
+        const previewTime = document.getElementById("preview-time");
+        const processButton = document.getElementById("process-button");
+        const batchSummary = document.getElementById("batch-summary");
+        const pickFolderButton = document.getElementById("pick-folder");
+        const bulkFolderDisplay = document.getElementById("bulk-folder-display");
+        const progressPanel = document.getElementById("index-progress-panel");
+        const progressCount = document.getElementById("progress-count");
+        const progressKnown = document.getElementById("progress-known");
+        const progressWarnings = document.getElementById("progress-warnings");
+        const progressBar = document.getElementById("progress-bar");
+        const progressNote = document.getElementById("progress-note");
+        const batchPanel = document.getElementById("batch-status-panel");
+        const batchProgressCount = document.getElementById("batch-progress-count");
+        const batchProgressBar = document.getElementById("batch-progress-bar");
+        const batchProgressNote = document.getElementById("batch-progress-note");
+        const batchCurrentFolder = document.getElementById("batch-current-folder");
+        const batchCurrentStep = document.getElementById("batch-current-step");
+        const batchFailures = document.getElementById("batch-failures");
+
+        const selectedItems = [];
+        let currentBatchId = null;
+        let activePreviewIndex = null;
+        let batchFolder = "";
+
+        function escapeHtml(value) {
+            return value
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;");
+        }
+
+        function renderBatchSummary() {
+            const kept = selectedItems.filter((item) => !item.discard).length;
+            const discarded = selectedItems.filter((item) => item.discard).length;
+            batchSummary.textContent = kept + " selected for tagging, " + discarded + " discarded.";
+            if (!{{ "true" if (dependency_error or index_building) else "false" }}) {
+                processButton.disabled = kept === 0;
+            }
+        }
+
+        function formatAddedTime(value) {
+            return value.toLocaleString([], {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+            });
+        }
+
+        function positionPreviewPopover(clientX, clientY) {
+            const maxLeft = Math.max(12, window.innerWidth - 380);
+            const maxTop = Math.max(12, window.innerHeight - 520);
+            const left = Math.min(maxLeft, clientX + 18);
+            const top = Math.min(maxTop, clientY + 18);
+            previewPopover.style.left = left + "px";
+            previewPopover.style.top = top + "px";
+        }
+
+        function renderPreviewPopover() {
+            if (activePreviewIndex === null || !selectedItems[activePreviewIndex]) {
+                previewPopover.hidden = true;
+                return;
+            }
+            const item = selectedItems[activePreviewIndex];
+            previewPopover.hidden = false;
+            previewImage.src = item.previewUrl;
+            previewImage.alt = item.file.name;
+            previewName.textContent = item.file.name;
+            previewTime.textContent = "Added at " + formatAddedTime(item.addedAt);
+        }
+
+        function renderBatchList() {
+            if (!selectedItems.length) {
+                batchReview.hidden = true;
+                previewEmpty.hidden = false;
+                status.textContent = "Nothing selected yet.";
+                batchSummary.textContent = "0 selected for tagging.";
+                activePreviewIndex = null;
+                renderPreviewPopover();
+                return;
+            }
+            batchReview.hidden = false;
+            previewEmpty.hidden = true;
+            batchList.innerHTML = selectedItems.map((item, index) => {
+                const rowClass = [
+                    "batch-row",
+                    item.discard ? "batch-row-discarded" : "",
+                    activePreviewIndex === index ? "batch-row-active" : "",
+                ].join(" ").trim();
+                return `
+                    <div class="${rowClass}" data-preview-index="${index}">
+                        <button type="button" class="batch-row-name-button" data-preview-index="${index}">${escapeHtml(item.file.name)}</button>
+                        <span>${formatAddedTime(item.addedAt)}</span>
+                        <span>${escapeHtml(item.subfolder || "Inbox")}</span>
+                        <label class="batch-row-check">
+                            <input type="checkbox" data-keep-toggle="${index}" ${item.discard ? "" : "checked"}>
+                        </label>
+                    </div>
+                `;
+            }).join("");
+            const kept = selectedItems.filter((item) => !item.discard).length;
+            status.textContent = kept === 1 ? "1 photo ready for tagging." : kept + " photos ready for tagging.";
+            renderBatchSummary();
+            renderPreviewPopover();
+        }
+
+        function addFiles(fileList) {
+            Array.from(fileList).forEach((file) => {
+                selectedItems.push({
+                    file,
+                    previewUrl: URL.createObjectURL(file),
+                    addedAt: new Date(),
+                    subfolder: batchFolder,
+                    discard: false,
+                });
+            });
+            renderBatchList();
+        }
+
+        function buildUploadPlan() {
+            return selectedItems.map((item) => ({
+                subfolder: batchFolder,
+                discard: item.discard,
+            }));
+        }
+
+        async function pollBatchStatus() {
+            if (!currentBatchId) {
+                return;
+            }
+            const response = await fetch("/batches/" + currentBatchId, { cache: "no-store" });
+            if (!response.ok) {
+                batchProgressNote.textContent = "Could not read batch status.";
+                return;
+            }
+            const data = await response.json();
+            batchPanel.hidden = false;
+            batchProgressCount.textContent = data.processed + " / " + data.total;
+            const percent = data.total ? (data.processed / data.total) * 100 : 0;
+            batchProgressBar.style.width = percent.toFixed(1) + "%";
+            batchCurrentFolder.textContent = data.current_folder || "Inbox";
+            batchCurrentStep.textContent = (data.status || "queued").replaceAll("_", " ");
+            batchProgressNote.textContent = data.current_file
+                ? "Working on " + data.current_file
+                : (data.status === "completed" || data.status === "completed_with_errors"
+                    ? "Batch finished."
+                    : "Waiting for the next photo...");
+
+            if (data.failures && data.failures.length) {
+                batchFailures.hidden = false;
+                batchFailures.innerHTML = data.failures.map((failure) => "<li>" + escapeHtml(failure) + "</li>").join("");
+            } else {
+                batchFailures.hidden = true;
+                batchFailures.innerHTML = "";
+            }
+
+            if (data.status === "completed" || data.status === "completed_with_errors") {
+                window.setTimeout(function () {
+                    window.location.reload();
+                }, 1200);
+                return;
+            }
+            window.setTimeout(pollBatchStatus, 1500);
+        }
+
+        input.addEventListener("change", function () {
+            addFiles(input.files || []);
+            input.value = "";
+        });
+
+        batchList.addEventListener("click", function (event) {
+            const keepToggle = event.target.closest("[data-keep-toggle]");
+            if (keepToggle) {
+                const index = Number(keepToggle.getAttribute("data-keep-toggle"));
+                selectedItems[index].discard = !keepToggle.checked;
+                renderBatchList();
+                return;
+            }
+        });
+
+        batchList.addEventListener("mouseover", function (event) {
+            const trigger = event.target.closest(".batch-row-name-button");
+            if (!trigger) {
+                return;
+            }
+            activePreviewIndex = Number(trigger.getAttribute("data-preview-index"));
+            positionPreviewPopover(event.clientX, event.clientY);
+            renderPreviewPopover();
+            renderBatchList();
+        });
+
+        batchList.addEventListener("mousemove", function (event) {
+            const trigger = event.target.closest(".batch-row-name-button");
+            if (!trigger || previewPopover.hidden) {
+                return;
+            }
+            positionPreviewPopover(event.clientX, event.clientY);
+        });
+
+        batchList.addEventListener("mouseleave", function () {
+            previewPopover.hidden = true;
+            activePreviewIndex = null;
+            renderBatchList();
+        });
+
+        pickFolderButton.addEventListener("click", async function () {
+            const response = await fetch("/pick-output-folder");
+            const payload = await response.json();
+            if (!response.ok) {
+                bulkFolderDisplay.textContent = payload.detail || "Folder selection failed.";
+                return;
+            }
+            if (!payload.selected) {
+                return;
+            }
+            batchFolder = payload.folder;
+            bulkFolderDisplay.textContent = payload.display_name;
+            selectedItems.forEach((item) => { item.subfolder = batchFolder; });
+            renderBatchList();
+        });
+
+        previewClose.addEventListener("click", function () {
+            previewPopover.hidden = true;
+            activePreviewIndex = null;
+            renderBatchList();
+        });
+
+        document.addEventListener("click", function (event) {
+            if (previewPopover.hidden) {
+                return;
+            }
+            if (previewPopover.contains(event.target) || batchList.contains(event.target)) {
+                return;
+            }
+            previewPopover.hidden = true;
+            activePreviewIndex = null;
+            renderBatchList();
+        });
+
+        processButton.addEventListener("click", async function () {
+            const kept = selectedItems.filter((item) => !item.discard);
+            if (!kept.length) {
+                return;
+            }
+            processButton.disabled = true;
+            batchPanel.hidden = false;
+            batchProgressNote.textContent = "Uploading batch...";
+            const formData = new FormData();
+            selectedItems.forEach((item) => {
+                formData.append("files", item.file, item.file.name);
+            });
+            formData.append("upload_plan", JSON.stringify(buildUploadPlan()));
+
+            const response = await fetch("/upload", {
+                method: "POST",
+                body: formData,
+            });
+            if (!response.ok) {
+                const errorText = await response.text();
+                batchProgressNote.textContent = "Upload failed: " + errorText;
+                processButton.disabled = false;
+                return;
+            }
+            const payload = await response.json();
+            currentBatchId = payload.batch_id;
+            batchCurrentStep.textContent = "queued";
+            batchProgressNote.textContent = "Batch queued.";
+            pollBatchStatus();
+        });
+
+        async function refreshIndexStatus() {
+            if (!progressPanel) {
+                return;
+            }
+            try {
+                const response = await fetch("/index-status", { cache: "no-store" });
+                if (!response.ok) {
+                    window.setTimeout(refreshIndexStatus, 4000);
+                    return;
+                }
+                const data = await response.json();
+                if (data.total) {
+                    const percent = Math.max(0, Math.min(100, (data.processed / data.total) * 100));
+                    progressBar.style.width = percent.toFixed(1) + "%";
+                    progressCount.textContent = data.processed + " / " + data.total;
+                } else {
+                    progressBar.style.width = "0%";
+                    progressCount.textContent = data.processed + " / ?";
+                }
+                progressKnown.textContent = data.known_count;
+                progressWarnings.textContent = data.warning_count;
+                progressNote.innerHTML = data.current_file
+                    ? "Working on <code>" + escapeHtml(data.current_file) + "</code>"
+                    : "Preparing the student index...";
+                if (!data.building) {
+                    progressPanel.remove();
+                    processButton.disabled = selectedItems.filter((item) => !item.discard).length === 0;
+                    return;
+                }
+            } catch (error) {
+                // Ignore transient polling issues.
+            }
+            window.setTimeout(refreshIndexStatus, 2000);
+        }
+
+        renderBatchList();
+        if (progressPanel) {
+            window.setTimeout(refreshIndexStatus, 2000);
+        }
+    })();
+</script>
 {% endblock %}

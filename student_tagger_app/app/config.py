@@ -32,7 +32,7 @@ def get_settings() -> Settings:
         project_root=project_root,
         reference_dir=project_root / "FACES" / "Students",
         uploads_dir=data_dir / "uploads",
-        processed_dir=data_dir / "processed",
+        processed_dir=data_dir / "Tagged Photos",
         cache_dir=data_dir / "cache",
         templates_dir=app_root / "templates",
         static_dir=app_root / "static",

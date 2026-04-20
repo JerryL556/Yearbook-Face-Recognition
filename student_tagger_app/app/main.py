@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
+import tkinter as tk
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from tkinter import filedialog
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -16,10 +21,11 @@ from .db import (
     fetch_photo,
     fetch_recent_photos,
     fetch_summary,
+    fetch_tagged_folders,
     initialize,
     replace_photo_results,
 )
-from .recognition import RecognitionDependencyError, StudentRecognizer, ensure_directories
+from .recognition import RecognitionDependencyError, StudentRecognizer, ensure_directories, normalize_subfolder
 
 settings = get_settings()
 ensure_directories(settings)
@@ -38,6 +44,39 @@ recognizer: StudentRecognizer | None = None
 index_warnings: list[str] = []
 index_building = False
 index_lock = threading.Lock()
+index_progress = {
+    "phase": "idle",
+    "processed": 0,
+    "total": 0,
+    "current_file": None,
+    "known_count": 0,
+    "warning_count": 0,
+    "started_at": None,
+    "updated_at": None,
+}
+batch_status_lock = threading.Lock()
+batch_statuses: dict[str, dict] = {}
+
+
+def update_index_progress(**values) -> None:
+    index_progress.update(values)
+    index_progress["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def build_index_status() -> dict:
+    return {
+        "building": index_building,
+        "dependency_error": recognizer_error,
+        "reference_count": recognizer.known_count() if recognizer else 0,
+        "phase": index_progress["phase"],
+        "processed": index_progress["processed"],
+        "total": index_progress["total"],
+        "current_file": index_progress["current_file"],
+        "known_count": index_progress["known_count"],
+        "warning_count": index_progress["warning_count"],
+        "started_at": index_progress["started_at"],
+        "updated_at": index_progress["updated_at"],
+    }
 
 
 def bootstrap_recognizer(force_rebuild: bool = False) -> None:
@@ -50,18 +89,43 @@ def bootstrap_recognizer(force_rebuild: bool = False) -> None:
         if index_building:
             return
         index_building = True
+        update_index_progress(
+            phase="starting",
+            processed=0,
+            total=0,
+            current_file=None,
+            known_count=0,
+            warning_count=0,
+            started_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     try:
         try:
             next_recognizer = StudentRecognizer(settings)
-            warnings = next_recognizer.load_or_build_index(force_rebuild=force_rebuild)
+            warnings = next_recognizer.load_or_build_index(
+                force_rebuild=force_rebuild,
+                progress_callback=lambda progress: update_index_progress(**progress),
+            )
             recognizer = next_recognizer
             index_warnings = warnings
             recognizer_error = None
+            update_index_progress(
+                phase="ready",
+                processed=index_progress["total"],
+                current_file=None,
+                known_count=next_recognizer.known_count(),
+                warning_count=len(warnings),
+            )
         except RecognitionDependencyError as exc:
             recognizer = None
             recognizer_error = str(exc)
             index_warnings = []
+            update_index_progress(
+                phase="error",
+                current_file=None,
+                known_count=0,
+                warning_count=0,
+            )
     finally:
         with index_lock:
             index_building = False
@@ -79,14 +143,19 @@ def bootstrap_recognizer_async(force_rebuild: bool = False) -> None:
 def build_home_context(request: Request) -> dict:
     summary = fetch_summary(db_connection)
     recent_photos = fetch_recent_photos(db_connection)
+    tagged_folders = fetch_tagged_folders(db_connection)
     return {
         "request": request,
         "summary": summary,
         "recent_photos": recent_photos,
+        "tagged_folders": tagged_folders,
         "reference_count": recognizer.known_count() if recognizer else 0,
         "reference_dir": settings.reference_dir,
+        "tagged_root_name": settings.processed_dir.name,
+        "tagged_root_path": settings.processed_dir,
         "dependency_error": recognizer_error,
         "index_building": index_building,
+        "index_status": build_index_status(),
         "index_warnings": index_warnings[:10],
         "warning_count": len(index_warnings),
     }
@@ -102,6 +171,84 @@ def home(request: Request):
     return templates.TemplateResponse(request, "index.html", build_home_context(request))
 
 
+@app.get("/index-status")
+def index_status() -> dict:
+    return build_index_status()
+
+
+def _update_batch_status(batch_id: str, **values) -> None:
+    with batch_status_lock:
+        if batch_id not in batch_statuses:
+            return
+        batch_statuses[batch_id].update(values)
+        batch_statuses[batch_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _process_batch(batch_id: str, items: list[dict]) -> None:
+    _update_batch_status(batch_id, status="processing", started_at=datetime.now(timezone.utc).isoformat())
+    completed = 0
+    discarded = 0
+    failures: list[str] = []
+    for item in items:
+        if item["discard"]:
+            discarded += 1
+            completed += 1
+            _update_batch_status(batch_id, processed=completed, discarded=discarded)
+            item["temp_path"].unlink(missing_ok=True)
+            continue
+        _update_batch_status(
+            batch_id,
+            current_file=item["original_filename"],
+            current_folder=item["subfolder"] or "Inbox",
+            current_step="tagging",
+        )
+        try:
+            if recognizer is None:
+                raise RuntimeError("Recognizer unavailable.")
+            result = recognizer.process_upload(
+                item["temp_path"],
+                item["original_filename"],
+                subfolder=item["subfolder"],
+                batch_id=batch_id,
+                output_root=settings.processed_dir,
+            )
+            replace_photo_results(db_connection, result["photo"], result["detections"])
+        except Exception as exc:
+            failures.append(f"{item['original_filename']}: {exc}")
+        finally:
+            completed += 1
+            _update_batch_status(batch_id, processed=completed, discarded=discarded)
+            item["temp_path"].unlink(missing_ok=True)
+            resized_temp = item["temp_path"].with_name(f"{item['temp_path'].stem}_resized{item['temp_path'].suffix}")
+            resized_temp.unlink(missing_ok=True)
+    status = "completed" if not failures else "completed_with_errors"
+    _update_batch_status(
+        batch_id,
+        status=status,
+        current_file=None,
+        current_folder=None,
+        current_step=None,
+        completed_at=datetime.now(timezone.utc).isoformat(),
+        failures=failures,
+    )
+
+
+def _build_batch_payload(batch_id: str) -> dict:
+    with batch_status_lock:
+        payload = dict(batch_statuses[batch_id])
+    payload["recent_photos"] = [
+        {
+            "id": photo["id"],
+            "original_filename": photo["original_filename"],
+            "annotated_filename": photo["annotated_filename"],
+            "subfolder": photo["subfolder"],
+        }
+        for photo in fetch_recent_photos(db_connection, limit=12)
+        if photo["batch_id"] == batch_id
+    ]
+    return payload
+
+
 @app.post("/rebuild-index")
 def rebuild_index():
     bootstrap_recognizer_async(force_rebuild=True)
@@ -109,14 +256,27 @@ def rebuild_index():
 
 
 @app.post("/upload")
-async def upload_photos(files: list[UploadFile] = File(...)):
+async def upload_photos(
+    files: list[UploadFile] = File(...),
+    upload_plan: str = Form(...),
+):
     if recognizer is None and not recognizer_error and not index_building:
         bootstrap_recognizer_async()
     if index_building:
         raise HTTPException(status_code=503, detail="Reference index is still building. Try again in a moment.")
     if recognizer_error or recognizer is None:
         raise HTTPException(status_code=503, detail=recognizer_error or "Recognizer unavailable.")
-    for upload in files:
+    try:
+        plan = json.loads(upload_plan)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid upload plan.") from exc
+    if not isinstance(plan, list) or len(plan) != len(files):
+        raise HTTPException(status_code=400, detail="Upload plan does not match selected files.")
+
+    batch_id = uuid.uuid4().hex[:12]
+    batch_items: list[dict] = []
+    total_items = len(plan)
+    for upload, item in zip(files, plan):
         if not upload.filename:
             continue
         suffix = Path(upload.filename).suffix or ".jpg"
@@ -127,15 +287,76 @@ async def upload_photos(files: list[UploadFile] = File(...)):
                 if not chunk:
                     break
                 temp_file.write(chunk)
-        try:
-            result = recognizer.process_upload(temp_path, upload.filename)
-            replace_photo_results(db_connection, result["photo"], result["detections"])
-        finally:
-            await upload.close()
-            temp_path.unlink(missing_ok=True)
-            resized_temp = temp_path.with_name(f"{temp_path.stem}_resized{temp_path.suffix}")
-            resized_temp.unlink(missing_ok=True)
-    return RedirectResponse(url="/", status_code=303)
+        await upload.close()
+        batch_items.append(
+            {
+                "temp_path": temp_path,
+                "original_filename": upload.filename,
+                "subfolder": normalize_subfolder(str(item.get("subfolder", ""))),
+                "discard": bool(item.get("discard", False)),
+            }
+        )
+
+    with batch_status_lock:
+        batch_statuses[batch_id] = {
+            "batch_id": batch_id,
+            "status": "queued",
+            "processed": 0,
+            "total": total_items,
+            "discarded": 0,
+            "current_file": None,
+            "current_folder": None,
+            "current_step": "queued",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": None,
+            "completed_at": None,
+            "failures": [],
+        }
+
+    worker = threading.Thread(target=_process_batch, args=(batch_id, batch_items), daemon=True)
+    worker.start()
+    return JSONResponse({"batch_id": batch_id})
+
+
+@app.get("/pick-output-folder")
+def pick_output_folder() -> dict:
+    settings.processed_dir.mkdir(parents=True, exist_ok=True)
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        selected = filedialog.askdirectory(
+            initialdir=str(settings.processed_dir),
+            title="Choose a folder inside Tagged Photos",
+            mustexist=False,
+        )
+    finally:
+        root.destroy()
+    if not selected:
+        return {"selected": False}
+    selected_path = Path(selected).resolve()
+    tagged_root = settings.processed_dir.resolve()
+    try:
+        relative = selected_path.relative_to(tagged_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Please choose a folder inside {tagged_root}.",
+        ) from exc
+    return {
+        "selected": True,
+        "folder": relative.as_posix() if str(relative) != "." else "",
+        "display_name": relative.as_posix() if str(relative) != "." else "Inbox",
+    }
+
+
+@app.get("/batches/{batch_id}")
+def batch_status(batch_id: str) -> dict:
+    with batch_status_lock:
+        if batch_id not in batch_statuses:
+            raise HTTPException(status_code=404, detail="Batch not found.")
+    return _build_batch_payload(batch_id)
 
 
 @app.get("/photos/{photo_id}")

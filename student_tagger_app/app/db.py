@@ -38,7 +38,18 @@ def initialize(connection: sqlite3.Connection) -> None:
         );
         """
     )
+    _ensure_column(connection, "photos", "batch_id", "TEXT")
+    _ensure_column(connection, "photos", "subfolder", "TEXT NOT NULL DEFAULT ''")
     connection.commit()
+
+
+def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, column_sql: str) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name not in columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
 
 
 def replace_photo_results(
@@ -56,8 +67,10 @@ def replace_photo_results(
             uploaded_at,
             status,
             face_count,
-            matched_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            matched_count,
+            batch_id,
+            subfolder
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             photo_record["original_filename"],
@@ -67,6 +80,8 @@ def replace_photo_results(
             photo_record["status"],
             photo_record["face_count"],
             photo_record["matched_count"],
+            photo_record.get("batch_id"),
+            photo_record.get("subfolder", ""),
         ),
     )
     photo_id = int(cursor.lastrowid)
@@ -148,3 +163,26 @@ def fetch_summary(connection: sqlite3.Connection) -> sqlite3.Row:
         """
     )
     return cursor.fetchone()
+
+
+def fetch_tagged_folders(connection: sqlite3.Connection, limit: int = 12) -> list[sqlite3.Row]:
+    cursor = connection.execute(
+        """
+        SELECT
+            CASE
+                WHEN TRIM(subfolder) = '' THEN 'Inbox'
+                ELSE subfolder
+            END AS folder_name,
+            COUNT(*) AS photo_count,
+            MAX(id) AS latest_photo_id
+        FROM photos
+        GROUP BY CASE
+            WHEN TRIM(subfolder) = '' THEN 'Inbox'
+            ELSE subfolder
+        END
+        ORDER BY latest_photo_id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return list(cursor.fetchall())

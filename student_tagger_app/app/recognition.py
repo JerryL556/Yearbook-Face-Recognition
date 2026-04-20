@@ -5,6 +5,7 @@ import re
 import shutil
 import sys
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,6 +61,18 @@ def parse_student_name(file_path: Path) -> str:
     return cleaned or stem
 
 
+def normalize_subfolder(raw_value: str | None) -> str:
+    if raw_value is None:
+        return ""
+    parts: list[str] = []
+    for part in re.split(r"[\\/]+", raw_value.strip()):
+        cleaned = re.sub(r'[<>:"|?*]+', "", part).strip().strip(".")
+        if not cleaned or cleaned in {".", ".."}:
+            continue
+        parts.append(cleaned[:80])
+    return "/".join(parts[:4])
+
+
 @dataclass
 class DetectionResult:
     name: str
@@ -79,7 +92,11 @@ class StudentRecognizer:
         self.known_encodings = np.empty((0, 128))
         self.cache_warnings: list[str] = []
 
-    def load_or_build_index(self, force_rebuild: bool = False) -> list[str]:
+    def load_or_build_index(
+        self,
+        force_rebuild: bool = False,
+        progress_callback: Callable[[dict], None] | None = None,
+    ) -> list[str]:
         if not self.settings.reference_dir.exists():
             raise RecognitionDependencyError(
                 f"Reference folder not found: {self.settings.reference_dir}"
@@ -90,31 +107,95 @@ class StudentRecognizer:
             self.known_files = [entry["source_file"] for entry in cache["entries"]]
             self.known_encodings = np.array([entry["encoding"] for entry in cache["entries"]], dtype=float)
             self.cache_warnings = cache.get("warnings", [])
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "phase": "loaded_cache",
+                        "processed": len(self.known_names),
+                        "total": len(self.known_names),
+                        "current_file": None,
+                        "known_count": len(self.known_names),
+                        "warning_count": len(self.cache_warnings),
+                    }
+                )
             return self.cache_warnings
 
         entries: list[dict] = []
         warnings: list[str] = []
-        for file_path in sorted(self.settings.reference_dir.glob("*")):
-            if not file_path.is_file():
-                continue
+        reference_files = [file_path for file_path in sorted(self.settings.reference_dir.glob("*")) if file_path.is_file()]
+        total_files = len(reference_files)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "building",
+                    "processed": 0,
+                    "total": total_files,
+                    "current_file": None,
+                    "known_count": 0,
+                    "warning_count": 0,
+                }
+            )
+        for index, file_path in enumerate(reference_files, start=1):
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "phase": "building",
+                        "processed": index - 1,
+                        "total": total_files,
+                        "current_file": file_path.name,
+                        "known_count": len(entries),
+                        "warning_count": len(warnings),
+                    }
+                )
             try:
                 image = self.face_recognition.load_image_file(file_path)
-                encodings = self.face_recognition.face_encodings(image)
+                reference_encoding, warning = self._extract_reference_encoding(image)
             except Exception as exc:
                 warnings.append(f"{file_path.name}: failed to load ({exc})")
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "phase": "building",
+                            "processed": index,
+                            "total": total_files,
+                            "current_file": file_path.name,
+                            "known_count": len(entries),
+                            "warning_count": len(warnings),
+                        }
+                    )
                 continue
-            if len(encodings) != 1:
-                warnings.append(
-                    f"{file_path.name}: expected 1 face in reference photo, found {len(encodings)}"
-                )
+            if warning is not None:
+                warnings.append(f"{file_path.name}: {warning}")
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "phase": "building",
+                            "processed": index,
+                            "total": total_files,
+                            "current_file": file_path.name,
+                            "known_count": len(entries),
+                            "warning_count": len(warnings),
+                        }
+                    )
                 continue
             entries.append(
                 {
                     "name": parse_student_name(file_path),
                     "source_file": file_path.name,
-                    "encoding": encodings[0].tolist(),
+                    "encoding": reference_encoding.tolist(),
                 }
             )
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "phase": "building",
+                        "processed": index,
+                        "total": total_files,
+                        "current_file": file_path.name,
+                        "known_count": len(entries),
+                        "warning_count": len(warnings),
+                    }
+                )
 
         payload = {
             "built_at": datetime.now(timezone.utc).isoformat(),
@@ -129,18 +210,74 @@ class StudentRecognizer:
         self.known_files = [entry["source_file"] for entry in entries]
         self.known_encodings = np.array([entry["encoding"] for entry in entries], dtype=float)
         self.cache_warnings = warnings
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "complete",
+                    "processed": total_files,
+                    "total": total_files,
+                    "current_file": None,
+                    "known_count": len(entries),
+                    "warning_count": len(warnings),
+                }
+            )
         return warnings
+
+    def _extract_reference_encoding(self, image: np.ndarray) -> tuple[np.ndarray | None, str | None]:
+        locations = self.face_recognition.face_locations(
+            image,
+            number_of_times_to_upsample=self.settings.upsample_times,
+            model=self.settings.detection_model,
+        )
+        if not locations:
+            return None, "no faces found in reference photo"
+
+        encodings = self.face_recognition.face_encodings(image, locations)
+        if not encodings:
+            return None, "face detection succeeded but encoding failed"
+
+        if len(encodings) == 1:
+            return encodings[0], None
+
+        largest_index = self._largest_face_index(locations)
+        return encodings[largest_index], None
+
+    @staticmethod
+    def _largest_face_index(locations: list[tuple[int, int, int, int]]) -> int:
+        best_index = 0
+        best_area = -1
+        for index, location in enumerate(locations):
+            top, right, bottom, left = location
+            area = max(0, bottom - top) * max(0, right - left)
+            if area > best_area:
+                best_area = area
+                best_index = index
+        return best_index
 
     def known_count(self) -> int:
         return len(self.known_names)
 
-    def process_upload(self, source_path: Path, original_filename: str) -> dict:
+    def process_upload(
+        self,
+        source_path: Path,
+        original_filename: str,
+        *,
+        subfolder: str = "",
+        batch_id: str | None = None,
+        output_root: Path | None = None,
+    ) -> dict:
         saved_name = self._store_upload(source_path, original_filename)
         upload_path = self.settings.uploads_dir / saved_name
         analyzed_path = upload_path
+        normalized_subfolder = normalize_subfolder(subfolder)
         try:
             detections, analyzed_path = self._recognize_faces(upload_path)
-            annotated_name = self._write_annotated_image(analyzed_path, detections)
+            annotated_name = self._write_annotated_image(
+                analyzed_path,
+                detections,
+                normalized_subfolder,
+                output_root=output_root,
+            )
             matched_count = sum(1 for detection in detections if detection.name != "Unknown")
             return {
                 "photo": {
@@ -151,6 +288,8 @@ class StudentRecognizer:
                     "status": "processed",
                     "face_count": len(detections),
                     "matched_count": matched_count,
+                    "batch_id": batch_id,
+                    "subfolder": normalized_subfolder,
                 },
                 "detections": [
                     {
@@ -221,9 +360,19 @@ class StudentRecognizer:
             resized.save(resized_path)
             return resized_path
 
-    def _write_annotated_image(self, image_path: Path, detections: list[DetectionResult]) -> str:
+    def _write_annotated_image(
+        self,
+        image_path: Path,
+        detections: list[DetectionResult],
+        subfolder: str = "",
+        output_root: Path | None = None,
+    ) -> str:
         output_name = f"{image_path.stem}_tagged.jpg"
-        output_path = self.settings.processed_dir / output_name
+        output_dir = output_root or self.settings.processed_dir
+        if subfolder:
+            output_dir = output_dir.joinpath(*subfolder.split("/"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / output_name
         with Image.open(image_path) as image:
             draw = ImageDraw.Draw(image)
             for detection in detections:
@@ -243,4 +392,7 @@ class StudentRecognizer:
                 )
                 draw.text((detection.left + 6, text_box_top + 6), label, fill="white")
             image.convert("RGB").save(output_path, quality=92)
-        return output_name
+        try:
+            return output_path.relative_to(self.settings.processed_dir).as_posix()
+        except ValueError:
+            return output_path.as_posix()
