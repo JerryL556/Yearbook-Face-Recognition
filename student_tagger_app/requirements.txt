@@ -4,5 +4,7 @@ jinja2>=3.1,<4.0
 python-multipart>=0.0.9,<1.0
 Pillow>=10.0,<12.0
 numpy>=1.26,<3.0
-dlib>=19.24
-face_recognition_models
+setuptools>=70,<82
+dlib-bin>=20.0.1; platform_system == "Windows"
+dlib>=19.24; platform_system != "Windows"
+face_recognition_models @ git+https://github.com/ageitgey/face_recognition_models.git

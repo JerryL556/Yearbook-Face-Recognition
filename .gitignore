@@ -1,3 +1,7 @@
 face_recognition-master/
 .venv/
 __pycache__/
+student_tagger_app/data/cache/
+student_tagger_app/data/processed/
+student_tagger_app/data/uploads/
+student_tagger_app/data/student_tagger.sqlite3

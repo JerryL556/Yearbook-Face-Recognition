@@ -38,6 +38,13 @@
 </section>
 {% endif %}
 
+{% if index_building %}
+<section class="panel">
+    <h2>Building Student Index</h2>
+    <p>The app is starting up and scanning the reference photos in <code>{{ reference_dir.name }}</code>. Refresh in a little while if uploads are still disabled.</p>
+</section>
+{% endif %}
+
 {% if warning_count %}
 <section class="panel">
     <div class="panel-heading">
@@ -66,7 +73,7 @@
             <span>Select or drop photos</span>
             <small>JPEG, PNG, and WebP are supported.</small>
         </label>
-        <button type="submit" {% if dependency_error %}disabled{% endif %}>Process Photos</button>
+        <button type="submit" {% if dependency_error or index_building %}disabled{% endif %}>Process Photos</button>
     </form>
 </section>
 

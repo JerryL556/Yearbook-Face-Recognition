@@ -1,0 +1,86 @@
+Session summary for future Codex context
+Date: 2026-04-20
+
+Project overview
+- Repo root: E:\Spring Coding\Face recognition
+- Main app: student_tagger_app
+- Purpose: local web app that tags uploaded photos by matching faces against reference portraits in FACES\Students
+- Important limitation: the current app depends on the Python face_recognition library, which in turn requires dlib
+
+What the app does
+- Starts a local FastAPI web server from student_tagger_app\run.py
+- Browser UI is at http://127.0.0.1:8000
+- Users upload batches of photos through the browser
+- Reference portraits live in FACES\Students
+- Processed images are written under student_tagger_app\data\processed
+- Uploaded copies are stored under student_tagger_app\data\uploads
+- Results metadata is stored in student_tagger_app\data\student_tagger.sqlite3
+
+What was explained to the user
+- The app is not a desktop window app; it is a local web app opened in a browser
+- If the user has a folder of photos to tag, they should start the app, open the browser UI, and upload/select all files from that folder
+- The app does not modify the original photo folder directly
+
+Git and repo changes made this session
+- Added .gitignore at repo root
+- .gitignore includes:
+  - face_recognition-master/
+  - .venv/
+  - __pycache__/
+- The imported face_recognition-master folder is intentionally ignored and not committed
+- Committed the project and pushed to GitHub repo:
+  https://github.com/JerryL556/Yearbook-Face-Recognition
+- Local git identity for this repo was set to:
+  - user.name: JerryL556
+  - user.email: jli.27@pomfret.org
+- Remote main originally had separate history with README.md and LICENSE only
+- That remote history was merged into local main before push
+- Current pushed branch head at the end of that work was commit 824289d (Merge remote main)
+
+Launcher added
+- Added a Windows double-click launcher at:
+  E:\Spring Coding\Face recognition\Launch Student Tagger.cmd
+- Launcher behavior:
+  - creates .venv if needed
+  - checks for required Python packages
+  - installs requirements if missing
+  - opens http://127.0.0.1:8000
+  - starts the app
+- Launcher was later updated to detect unsupported Python versions for dlib on Windows
+
+Dependency/install issues encountered
+- User saw:
+  - ModuleNotFoundError: No module named 'uvicorn'
+  - ModuleNotFoundError: No module named 'fastapi'
+  - ModuleNotFoundError: No module named 'numpy'
+- Root cause: dependencies were not installed in the Python environment being used
+- Additional root cause discovered later:
+  - system Python on this machine is Python 3.13.7
+  - dlib installation on Windows is likely to fail on Python 3.13
+- py -0p showed only:
+  - Python 3.13 at C:\Python313\python.exe
+
+Important technical conclusion
+- The current app cannot realistically be set up on this Windows machine with Python 3.13 because dlib usually will not install there
+- Recommended path if keeping current architecture:
+  - install Python 3.11
+  - delete the existing .venv
+  - recreate .venv with Python 3.11
+  - reinstall requirements
+- User asked if dlib could be skipped
+- Answer given:
+  - not with the current app architecture
+  - avoiding dlib would require replacing the recognition backend or removing automatic recognition
+
+Likely next best options for future work
+- Option 1: Keep current app and switch environment to Python 3.11 so dlib can install
+- Option 2: Refactor the app to use a more Windows-friendly face recognition approach that does not depend on dlib
+- Option 3: Convert the project into a more manual tagging workflow if automatic recognition is not required
+
+Notes for future Codex
+- The user prefers a simpler, click-to-open experience over command-line steps
+- If continuing this project, strongly consider replacing the current backend dependency chain instead of asking the user to manage Python/dlib setup
+- If using this summary in a new session, also inspect:
+  - student_tagger_app\README.md
+  - student_tagger_app\app\recognition.py
+  - Launch Student Tagger.cmd

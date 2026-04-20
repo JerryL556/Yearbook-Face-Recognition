@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -35,24 +36,44 @@ initialize(db_connection)
 recognizer_error: str | None = None
 recognizer: StudentRecognizer | None = None
 index_warnings: list[str] = []
+index_building = False
+index_lock = threading.Lock()
 
 
 def bootstrap_recognizer(force_rebuild: bool = False) -> None:
     global recognizer
     global recognizer_error
     global index_warnings
+    global index_building
+
+    with index_lock:
+        if index_building:
+            return
+        index_building = True
 
     try:
-        recognizer = StudentRecognizer(settings)
-        index_warnings = recognizer.load_or_build_index(force_rebuild=force_rebuild)
-        recognizer_error = None
-    except RecognitionDependencyError as exc:
-        recognizer = None
-        recognizer_error = str(exc)
-        index_warnings = []
+        try:
+            next_recognizer = StudentRecognizer(settings)
+            warnings = next_recognizer.load_or_build_index(force_rebuild=force_rebuild)
+            recognizer = next_recognizer
+            index_warnings = warnings
+            recognizer_error = None
+        except RecognitionDependencyError as exc:
+            recognizer = None
+            recognizer_error = str(exc)
+            index_warnings = []
+    finally:
+        with index_lock:
+            index_building = False
 
 
-bootstrap_recognizer()
+def bootstrap_recognizer_async(force_rebuild: bool = False) -> None:
+    thread = threading.Thread(
+        target=bootstrap_recognizer,
+        kwargs={"force_rebuild": force_rebuild},
+        daemon=True,
+    )
+    thread.start()
 
 
 def build_home_context(request: Request) -> dict:
@@ -65,24 +86,34 @@ def build_home_context(request: Request) -> dict:
         "reference_count": recognizer.known_count() if recognizer else 0,
         "reference_dir": settings.reference_dir,
         "dependency_error": recognizer_error,
+        "index_building": index_building,
         "index_warnings": index_warnings[:10],
         "warning_count": len(index_warnings),
     }
 
 
+@app.on_event("startup")
+def start_background_index() -> None:
+    bootstrap_recognizer_async()
+
+
 @app.get("/")
 def home(request: Request):
-    return templates.TemplateResponse("index.html", build_home_context(request))
+    return templates.TemplateResponse(request, "index.html", build_home_context(request))
 
 
 @app.post("/rebuild-index")
 def rebuild_index():
-    bootstrap_recognizer(force_rebuild=True)
+    bootstrap_recognizer_async(force_rebuild=True)
     return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/upload")
 async def upload_photos(files: list[UploadFile] = File(...)):
+    if recognizer is None and not recognizer_error and not index_building:
+        bootstrap_recognizer_async()
+    if index_building:
+        raise HTTPException(status_code=503, detail="Reference index is still building. Try again in a moment.")
     if recognizer_error or recognizer is None:
         raise HTTPException(status_code=503, detail=recognizer_error or "Recognizer unavailable.")
     for upload in files:
@@ -114,6 +145,7 @@ def photo_detail(request: Request, photo_id: int):
         raise HTTPException(status_code=404, detail="Photo not found.")
     detections = fetch_detections(db_connection, photo_id)
     return templates.TemplateResponse(
+        request,
         "photo_detail.html",
         {
             "request": request,
