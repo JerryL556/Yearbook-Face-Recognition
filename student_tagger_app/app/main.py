@@ -18,8 +18,10 @@ from .config import get_settings
 from .db import (
     connect,
     fetch_detections,
+    fetch_latest_photo_id_by_source,
     fetch_photo,
     fetch_recent_photos,
+    fetch_recent_photos_by_source,
     fetch_summary,
     fetch_tagged_folders,
     initialize,
@@ -143,12 +145,15 @@ def bootstrap_recognizer_async(force_rebuild: bool = False) -> None:
 def build_home_context(request: Request) -> dict:
     summary = fetch_summary(db_connection)
     recent_photos = fetch_recent_photos(db_connection)
+    desktop_results = fetch_recent_photos_by_source(db_connection, "desktop_screenshot", limit=2)
     tagged_folders = fetch_tagged_folders(db_connection)
     return {
         "request": request,
         "summary": summary,
         "recent_photos": recent_photos,
+        "desktop_results": desktop_results,
         "tagged_folders": tagged_folders,
+        "latest_desktop_photo_id": fetch_latest_photo_id_by_source(db_connection, "desktop_screenshot"),
         "reference_count": recognizer.known_count() if recognizer else 0,
         "reference_dir": settings.reference_dir,
         "tagged_root_name": settings.processed_dir.name,
@@ -211,6 +216,7 @@ def _process_batch(batch_id: str, items: list[dict]) -> None:
                 subfolder=item["subfolder"],
                 batch_id=batch_id,
                 output_root=settings.processed_dir,
+                source_kind="upload",
             )
             replace_photo_results(db_connection, result["photo"], result["detections"])
         except Exception as exc:
@@ -247,6 +253,19 @@ def _build_batch_payload(batch_id: str) -> dict:
         if photo["batch_id"] == batch_id
     ]
     return payload
+
+
+def _serialize_photo_row(photo) -> dict:
+    return {
+        "id": int(photo["id"]),
+        "original_filename": photo["original_filename"],
+        "annotated_filename": photo["annotated_filename"],
+        "subfolder": photo["subfolder"],
+        "matched_count": int(photo["matched_count"]),
+        "face_count": int(photo["face_count"]),
+        "uploaded_at": photo["uploaded_at"],
+        "source_kind": photo["source_kind"],
+    }
 
 
 @app.post("/rebuild-index")
@@ -319,6 +338,54 @@ async def upload_photos(
     return JSONResponse({"batch_id": batch_id})
 
 
+@app.post("/desktop-capture")
+async def desktop_capture(
+    file: UploadFile = File(...),
+):
+    if recognizer is None and not recognizer_error and not index_building:
+        bootstrap_recognizer_async()
+    if index_building:
+        raise HTTPException(status_code=503, detail="Reference index is still building. Try again in a moment.")
+    if recognizer_error or recognizer is None:
+        raise HTTPException(status_code=503, detail=recognizer_error or "Recognizer unavailable.")
+
+    suffix = Path(file.filename or "desktop_capture.png").suffix or ".png"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        temp_path = Path(temp_file.name)
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            temp_file.write(chunk)
+    await file.close()
+
+    original_filename = datetime.now().strftime("desktop_capture_%Y%m%d_%H%M%S.png")
+    try:
+        result = recognizer.process_upload(
+            temp_path,
+            original_filename,
+            output_root=settings.processed_dir,
+            source_kind="desktop_screenshot",
+        )
+        photo_id = replace_photo_results(db_connection, result["photo"], result["detections"])
+    finally:
+        temp_path.unlink(missing_ok=True)
+        resized_temp = temp_path.with_name(f"{temp_path.stem}_resized{temp_path.suffix}")
+        resized_temp.unlink(missing_ok=True)
+
+    return JSONResponse(
+        {
+            "photo_id": photo_id,
+            "detail_url": f"/photos/{photo_id}",
+            "photo": {
+                **result["photo"],
+                "id": photo_id,
+            },
+            "detections": result["detections"],
+        }
+    )
+
+
 @app.get("/pick-output-folder")
 def pick_output_folder() -> dict:
     settings.processed_dir.mkdir(parents=True, exist_ok=True)
@@ -357,6 +424,15 @@ def batch_status(batch_id: str) -> dict:
         if batch_id not in batch_statuses:
             raise HTTPException(status_code=404, detail="Batch not found.")
     return _build_batch_payload(batch_id)
+
+
+@app.get("/desktop-results")
+def desktop_results() -> dict:
+    photos = fetch_recent_photos_by_source(db_connection, "desktop_screenshot", limit=2)
+    return {
+        "latest_photo_id": fetch_latest_photo_id_by_source(db_connection, "desktop_screenshot"),
+        "results": [_serialize_photo_row(photo) for photo in photos],
+    }
 
 
 @app.get("/photos/{photo_id}")

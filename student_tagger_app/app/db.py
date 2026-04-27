@@ -40,6 +40,7 @@ def initialize(connection: sqlite3.Connection) -> None:
     )
     _ensure_column(connection, "photos", "batch_id", "TEXT")
     _ensure_column(connection, "photos", "subfolder", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(connection, "photos", "source_kind", "TEXT NOT NULL DEFAULT 'upload'")
     connection.commit()
 
 
@@ -69,8 +70,9 @@ def replace_photo_results(
             face_count,
             matched_count,
             batch_id,
-            subfolder
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            subfolder,
+            source_kind
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             photo_record["original_filename"],
@@ -82,6 +84,7 @@ def replace_photo_results(
             photo_record["matched_count"],
             photo_record.get("batch_id"),
             photo_record.get("subfolder", ""),
+            photo_record.get("source_kind", "upload"),
         ),
     )
     photo_id = int(cursor.lastrowid)
@@ -125,6 +128,39 @@ def fetch_recent_photos(connection: sqlite3.Connection, limit: int = 24) -> list
         (limit,),
     )
     return list(cursor.fetchall())
+
+
+def fetch_recent_photos_by_source(
+    connection: sqlite3.Connection,
+    source_kind: str,
+    limit: int = 12,
+) -> list[sqlite3.Row]:
+    cursor = connection.execute(
+        """
+        SELECT *
+        FROM photos
+        WHERE source_kind = ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (source_kind, limit),
+    )
+    return list(cursor.fetchall())
+
+
+def fetch_latest_photo_id_by_source(connection: sqlite3.Connection, source_kind: str) -> int | None:
+    cursor = connection.execute(
+        """
+        SELECT id
+        FROM photos
+        WHERE source_kind = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (source_kind,),
+    )
+    row = cursor.fetchone()
+    return int(row["id"]) if row is not None else None
 
 
 def fetch_photo(connection: sqlite3.Connection, photo_id: int) -> sqlite3.Row | None:

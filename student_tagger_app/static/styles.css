@@ -69,6 +69,16 @@ code {
     border-radius: 1.5rem;
 }
 
+.live-notice {
+    margin: 0 0 1rem;
+    padding: 0.95rem 1.1rem;
+    border-radius: 1rem;
+    border: 1px solid rgba(13, 92, 99, 0.18);
+    background: rgba(13, 92, 99, 0.08);
+    color: var(--accent-strong);
+    font-weight: 700;
+}
+
 .hero {
     display: grid;
     grid-template-columns: 1.5fr 1fr;

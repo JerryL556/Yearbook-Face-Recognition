@@ -29,6 +29,8 @@
     </div>
 </section>
 
+<div id="desktop-notification" class="live-notice" hidden>New realtime desktop face result is ready.</div>
+
 {% if dependency_error %}
 <section class="panel warning-panel">
     <h2>Dependencies missing</h2>
@@ -156,6 +158,28 @@
 <section class="panel">
     <div class="panel-heading">
         <div>
+            <h2>Realtime Desktop Face Recognition</h2>
+            <p>Here will show the result of the faces on the user's screen after screenshot.</p>
+        </div>
+    </div>
+    <div id="desktop-results-grid" class="gallery">
+        {% for photo in desktop_results %}
+        <a class="photo-card" href="/photos/{{ photo['id'] }}">
+            <img src="{{ url_for('processed', path='/' + photo['annotated_filename']) }}" alt="{{ photo['original_filename'] }}">
+            <div class="photo-meta">
+                <strong>{{ photo["original_filename"] }}</strong>
+                <span>{{ photo["matched_count"] }} matches / {{ photo["face_count"] }} faces</span>
+                <span>Captured from desktop</span>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    <p id="desktop-results-empty" class="empty-state" {% if desktop_results %}hidden{% endif %}>No desktop screenshot results yet.</p>
+</section>
+
+<section class="panel">
+    <div class="panel-heading">
+        <div>
             <h2>Tagged Photo Folders</h2>
             <p>Quick access to the most recently used subfolders under <code>{{ tagged_root_name }}</code>.</p>
         </div>
@@ -237,11 +261,16 @@
         const batchCurrentFolder = document.getElementById("batch-current-folder");
         const batchCurrentStep = document.getElementById("batch-current-step");
         const batchFailures = document.getElementById("batch-failures");
+        const desktopNotification = document.getElementById("desktop-notification");
+        const desktopResultsGrid = document.getElementById("desktop-results-grid");
+        const desktopResultsEmpty = document.getElementById("desktop-results-empty");
 
         const selectedItems = [];
         let currentBatchId = null;
         let activePreviewIndex = null;
         let batchFolder = "";
+        let latestDesktopPhotoId = {{ latest_desktop_photo_id|tojson }};
+        let desktopResultsPrimed = false;
 
         function escapeHtml(value) {
             return value
@@ -260,8 +289,29 @@
             }
         }
 
+        function showDesktopNotification(message) {
+            desktopNotification.textContent = message;
+            desktopNotification.hidden = false;
+            window.setTimeout(function () {
+                desktopNotification.hidden = true;
+            }, 4200);
+        }
+
         function formatAddedTime(value) {
-            return value.toLocaleString([], {
+            return value.toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+            });
+        }
+
+        function formatServerTime(value) {
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) {
+                return value;
+            }
+            return parsed.toLocaleString("en-US", {
                 month: "short",
                 day: "numeric",
                 hour: "numeric",
@@ -344,6 +394,25 @@
                 subfolder: batchFolder,
                 discard: item.discard,
             }));
+        }
+
+        function renderDesktopResults(results) {
+            if (!results.length) {
+                desktopResultsGrid.innerHTML = "";
+                desktopResultsEmpty.hidden = false;
+                return;
+            }
+            desktopResultsEmpty.hidden = true;
+            desktopResultsGrid.innerHTML = results.map((photo) => `
+                <a class="photo-card" href="/photos/${photo.id}">
+                    <img src="${encodeURI("/processed/" + photo.annotated_filename)}" alt="${escapeHtml(photo.original_filename)}">
+                    <div class="photo-meta">
+                        <strong>${escapeHtml(photo.original_filename)}</strong>
+                        <span>${photo.matched_count} matches / ${photo.face_count} faces</span>
+                        <span>Captured ${escapeHtml(formatServerTime(photo.uploaded_at))}</span>
+                    </div>
+                </a>
+            `).join("");
         }
 
         async function pollBatchStatus() {
@@ -525,10 +594,31 @@
             window.setTimeout(refreshIndexStatus, 2000);
         }
 
+        async function pollDesktopResults() {
+            try {
+                const response = await fetch("/desktop-results", { cache: "no-store" });
+                if (response.ok) {
+                    const payload = await response.json();
+                    renderDesktopResults(payload.results || []);
+                    if (desktopResultsPrimed && payload.latest_photo_id && payload.latest_photo_id !== latestDesktopPhotoId) {
+                        latestDesktopPhotoId = payload.latest_photo_id;
+                        showDesktopNotification("New realtime desktop face result is ready.");
+                    } else {
+                        latestDesktopPhotoId = payload.latest_photo_id || latestDesktopPhotoId;
+                    }
+                    desktopResultsPrimed = true;
+                }
+            } catch (error) {
+                // Ignore transient polling issues.
+            }
+            window.setTimeout(pollDesktopResults, 2500);
+        }
+
         renderBatchList();
         if (progressPanel) {
             window.setTimeout(refreshIndexStatus, 2000);
         }
+        window.setTimeout(pollDesktopResults, 2500);
     })();
 </script>
 {% endblock %}

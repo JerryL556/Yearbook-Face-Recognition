@@ -265,6 +265,7 @@ class StudentRecognizer:
         subfolder: str = "",
         batch_id: str | None = None,
         output_root: Path | None = None,
+        source_kind: str = "upload",
     ) -> dict:
         saved_name = self._store_upload(source_path, original_filename)
         upload_path = self.settings.uploads_dir / saved_name
@@ -290,6 +291,7 @@ class StudentRecognizer:
                     "matched_count": matched_count,
                     "batch_id": batch_id,
                     "subfolder": normalized_subfolder,
+                    "source_kind": source_kind,
                 },
                 "detections": [
                     {
