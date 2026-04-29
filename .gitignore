@@ -1,6 +1,8 @@
 face_recognition-master/
 .venv/
 __pycache__/
+build/
+dist/
 student_tagger_app/data/cache/
 student_tagger_app/data/processed/
 student_tagger_app/data/Tagged Photos/

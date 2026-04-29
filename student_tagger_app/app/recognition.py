@@ -38,7 +38,7 @@ def _load_face_recognition(settings: Settings):
         except Exception as exc:  # pragma: no cover - dependency driven
             raise RecognitionDependencyError(
                 "Unable to import face_recognition. Install dlib, face_recognition_models, "
-                "and the Python dependencies before running the app."
+                f"and the Python dependencies before running the app. Underlying error: {exc}"
             ) from exc
 
 

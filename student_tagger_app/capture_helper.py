@@ -383,6 +383,10 @@ class CaptureHelperApp:
         self.root.mainloop()
 
 
-if __name__ == "__main__":
+def main() -> None:
     enable_dpi_awareness()
     CaptureHelperApp().run()
+
+
+if __name__ == "__main__":
+    main()

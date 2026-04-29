@@ -94,10 +94,8 @@ if errorlevel 1 (
     )
 )
 
-echo Opening browser...
-start "" "http://127.0.0.1:8000"
-
 echo Starting Student Photo Tagger...
+echo The app will open the browser automatically.
 echo Leave this window open while using the app.
 echo.
 "%VENV_PY%" "%RUNNER%"
